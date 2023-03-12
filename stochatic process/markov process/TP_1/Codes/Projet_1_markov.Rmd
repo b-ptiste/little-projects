@@ -1,0 +1,704 @@
+---
+title: 'Projet 1  Modèles Markoviens'
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+  keep_tex: yes
+  fig_caption: yes
+---
+
+Nettoyage de l'environnement de travail afin d'éviter toutes confusions au niveau des variables utilisées dans ce projets et des possibles variables déjà existantes dans l'environnement de travail.
+
+```{r}
+rm(list = ls())
+```
+
+
+Le package **markovChain** qui sans surprise, permet de travailler sur les chaines de Markov. Il nous sera surtout utile ici, pour la création de graphes de transition, dans le cas où on travaille en espace d'états fini, sans trop de variables dans l'espace d'état de facon à y voir relativement clair.
+
+Une particularité du package, est que les graphes qui sont réalisés par le package ne sont pas toujours les mêmes d'une exécution à l'autre. C'est pour cela que vous trouverez à ce niveau des différences entre les résultats du CR et les résultats dans le notebook si vous le reéxécutez.
+
+```{r}
+library(markovchain)
+library(RColorBrewer)
+library(ggplot2)
+# pour mettre des dataframe en couleur.
+# install.packages("formattable")
+library(formattable)
+```
+
+# Code R2
+
+Comme indiqué dans le compte rendu nous avons décidé de commencer par le code R2 dans ce projet.
+
+La fonction écrite ci-dessous permet de simuler une trajectoire de longueur n d'une chaine de markov à espace d'états fini, dont la matrice de transition est P et son état initial est $X_0$. 
+
+Nous avons ajouté en entré de cette fonction un paramètre booléen **form** qui permet en faite de régler l'affichage de la sortie de cette fonction. Si le paramètre form vaut **TRUE** alors la fonction affichera en sortie une trajectoire constitué des états de la chaine. S'il vaut **FALSE** la trajectoire sera une suite de nombre entier.
+
+
+```{r}
+
+# fonction de simulation de la chaine.
+simuMarkov <- function (x0, P , n, form){
+  
+  
+  # choix de la chaine.
+  if(form == T){
+    et = colnames(P) # ici on met nos différents états.
+    x0 = colnames(P)[x0]
+  } else {
+    et = c(1:nrow(P))
+  }
+  
+  res = rep(0,n) # ici on aura notre chaine de markov
+  res[1] = x0 # initialisation de notre chaine.
+  
+  for (i in c(2:n)){
+    res[i] = sample(et,size = 1 ,prob = P[res[i-1],]) # passage au nouvel état.
+  }
+  
+  return(res)
+}
+```
+
+# Code R1
+
+Construction des grandeurs caractéristiques de notre chaine de markov.
+
+```{r}
+etats = c("A","C","G","T")
+P = matrix(c(.180,.274,.426,.120,.171,.367,.274,.188,.161,.339,.375,.125,.079,.355,.384,.182),
+nrow=4, byrow=T)
+rownames(P)=etats ; colnames(P)=etats
+P 
+
+```
+Regardons maintenant le graphe de transition de notre matrice P, via le package Markov Chain
+
+```{r}
+CM = new("markovchain", transitionMatrix = P)
+plot(CM,main="Graphe de P")
+```
+
+```{r}
+# simulation de la chaine de markov.
+
+N = 100000
+x0 = 1
+S = simuMarkov(x0,P,N,T)
+```
+
+
+
+```{r}
+df = data.frame(val = c('A','C','G','T'),freq=c(table(S)/N))
+
+ggplot(data=df, aes(x=val, y=freq)) +
+  geom_bar(stat="identity", fill="steelblue",width=0.5)+
+  ggtitle("fréquences d'occupations")
+```
+
+
+Le code suivant est une méthode pour trouver une probabilité invariante dans le cas irréductible fini.
+Combinaison direct entre l'équation de balance global et somme des coefficients égale à 1 (normalité).
+Attention cette technique ne fonctionne que sur des chaines dont on sait l'irreductibilité et l'unicité de la probabilité invariante (détails CR)
+
+Ici nous avons juste renommé la proba invariante **prob_inv** et non pi car pi est déjà un nom de variable pour le logiciel R et pour éviter tout conflit nous préférons ne pas l'utiliser dans nos programmes.
+
+```{r}
+M = diag(nrow(P)) - t(P) # I - t(P)
+M[nrow(P),]=1  
+b=rep(0,nrow(P)); b[nrow(P)]=1
+prob_inv=solve(M,b)
+prob_inv
+```
+
+Maintenant, que nous disposons de la probabilité invariante, nous pouvons commencer nos tests, pour la loi forte des grands nombres (**LFGN**).
+
+```{r}
+sp = rep(c('fréquences empiriques','proba invariante'),each=4)
+df = data.frame(supp = sp,val = c('A','C','G','T'),freq=c(c(table(S)/N),prob_inv))
+ggplot(data=df, aes(x=val, y=freq)) +
+  geom_col(aes(color = supp, fill = supp), position = position_dodge(0.8), width = 0.7)+
+  ggtitle("LFGN")
+```
+Ici on peut voir que la convergence imposée par le théorème de la LFGN semble être respectée, sur cet exemple particulier.
+
+Comme ici on a aussi une chaine de matrice P qui est **apériodique**, on peut aussi venir vérifier le critère de convergence en loi.
+
+```{r}
+K = 5000
+N = 1000
+
+x0 = 1
+
+tab = replicate(K,simuMarkov(x0,P,N,T))
+# dans le tableau crée on ne récupère que la dernière ligne qui correspond à un K échantillon
+# de la variable X_N.
+K_echantillon = tab[N,] 
+```
+
+```{r}
+sp = rep(c('fréquences empiriques','proba invariante'),each=4)
+df = data.frame(supp = sp,val = c('A','C','G','T'),freq=c(c(table(K_echantillon)/K),prob_inv))
+ggplot(data=df, aes(x=val, y=freq)) +
+  geom_col(aes(color = supp, fill = supp), position = position_dodge(0.8), width = 0.7)+
+  ggtitle("CV en Loi")
+```
+
+
+
+On retrouve ici les résultats de la convergence en loi (théorème 7).
+
+A titre personnel nous avons voulue voir comment se comporte cette même convergence en loi quand au lieu de faire un replicate on change l'état x0 de facon aléatoire à chaque replique de notre simulation. C'est un moyen de se convaincre que peu importe l'état dans lequel on démarre on aura bien une convergence en loi à la fin.
+
+
+```{r}
+K = 5000
+N = 1000
+
+x0 = 1
+
+tab = NULL
+for (j in c(1:K)){
+  X_0 = sample(1:4,1,replace=T)
+  X = simuMarkov(x0,P,N,F)
+  tab = cbind(tab,X)
+}
+K_echantillon = tab[N,] 
+```
+
+
+```{r}
+
+sp = rep(c('fréquences empiriques','proba invariante'),each=4)
+df = data.frame(supp = sp,val = c('A','C','G','T'),freq=c(c(table(K_echantillon)/K),prob_inv))
+ggplot(data=df, aes(x=val, y=freq)) +
+  geom_col(aes(color = supp, fill = supp), position = position_dodge(0.8), width = 0.7)+
+  ggtitle("CV en Loi")
+```
+
+
+On a fait ainsi deux tests, LFGN et CV en loi et ces deux tests sont en accord avec la théorie. Il parait ainsi raisonable d'affirmer que notre fonction de simulation, permet effectivement de bien simuler une chaine de markov de matrice de transition P. Ici nous n'avons effectué les tests que sur une chaine et à chaque fois avec un état initial fixe dans la chaine. Pour se convaincre vraiment que les résultats de le LFGN et la CV en loi sont vérifiés il faudrait le vérifier, déjà pour plusieurs chaines de markov, et ensuite pour plusieurs probabilités d'initialisation $\pi_0$. Mais ici on ne va pas s'attarder la dessus. Le plus important pour nous était d'écrire un algorithme qui permet de simuler une chaine de markov et ensuite de se confronter aux problèmes engendrés, par la simulation à savoir est ce que ce qu'on simule c'est bien ce que l'on veut. Ici on peut raisonnablement affirmer que oui, on simule bien une CMH de matrice P.
+
+# Code R3
+
+Cette section est plus consacrée à l'étude de graphes, qu'à l'étude de chaine de markov en elle même. On va étudier les comportements des graphes et notamment des différentes classes de communication via un outil incontournable de la théorie des graphes qui est la matrice d'adjacence. En effet le fait de pouvoir représenter une chaine de markov sous la forme d'un graphe de transition, permet de venir utiliser des outils spécifiques aux graphes et cela permet de faire abstraction du contexte markovien et se concentrer essentiellement sur les propriétés du graphe en tant que tel. On a une sorte de dualité.
+
+
+Dans la définition, classique du produit matriciel on remplace la somme par un **ou** logique pour qu'en fait la matrice d'adjacence élevée à une puissance (avec la définition de la puissance) correspond elle aussi à une matrice d'adjacence particulière.
+
+
+## Les algorithmes
+
+
+```{r}
+# fonction permettant de faire le produit matriciel logique entre deux matrices logiques.
+
+cros<-function (A,B){
+  res = A%*%B
+  # on remet ici les coefficients pour qu'on ait toujours une matrice d'adjacence.
+  res[which(res>=1)]=1
+  return (res)
+}
+
+```
+
+```{r}
+
+A = matrix(c(1,0,1,1,0,1,1,0,1),nrow=3)
+A
+B = matrix(c(1,1,0,1,0,0,0,0,1),nrow=3)
+B
+
+cros(A,B)
+```
+
+
+
+```{r}
+
+# fonction rendant les propriétées des classes de communications ...
+
+comChain <- function (P){
+  # création de la matrice d'adjacence
+  A = P
+  A[A>0] = 1
+  
+  Ak = A 
+  
+  # matrice qui vont servir pour les classes de communication.
+  
+  MF = diag(nrow(P)) # F
+  MT = diag(nrow(P)) # T
+  
+  # boucle pour calculer les matrices F et T
+  for (k in c(1:(nrow(P)-1))){
+    MF = MF|Ak
+    MT = MT|t(Ak)
+    Ak = cros(Ak,A)
+  }
+  
+  C = MF*MT # utilisation du calcul vecotriel
+  
+  # ensuite on commence le travail sur les différentes classes de communication.
+  
+  # on travaille sur les noms des états.
+  etats = rep(0,nrow(P))
+  
+  if (is.null(row.names(P))){
+    if (is.null(colnames(P))){
+      # ici rien n'est précisé.
+      etats = c(1:nrow(P))
+    } else {
+      etats = strtoi(colnames(P))
+    }
+  } else {
+    etats = strtoi(row.names(P))
+  }
+  
+  M = matrix(rep(etats,nrow(P)),nrow = nrow(P),byrow =T)
+  classe_com = M*C
+  
+  # construction d'un paste pour avoir les différentes classes de communication.
+  cl_m = paste("C(",etats,")",sep="")
+  
+  rownames(classe_com) = cl_m
+  classe_com = unique(classe_com) # on ne récupère que les classes de communication qui sont uniques.
+  
+  
+  irr = FALSE 
+  
+  # si il n'y a qu'un seule classe de communication alors la chaine est irreductible.
+  if (nrow(classe_com) == 1){
+    irr = TRUE
+  }
+  
+  # maintenant, nous allons regarder les classes de communication qui sont absorbantes.
+  
+  ACS = M*MF # on regarde les "classes d'accecibilité" 
+  rownames(ACS) = cl_m # on met juste les mêmes noms pour les sélections.
+  ACS = ACS[rownames(classe_com),] # on sélectionne les bonnes classes.
+  
+  # ici ce qui est pratique c'est que comme les états sont des entiers on peut faire des soustractions
+  ACS = ACS-classe_com
+  cl_abs = apply(ACS==0,1,all)
+  
+  classe_com[which(classe_com==0)] = NaN 
+  colnames(classe_com) = etats
+
+  
+  return(list(classe_com = classe_com,irr = irr,classe_absorbante = cl_abs))
+}
+```
+
+**Remarque : ** Si jamais l'on veut tester notre algorithme en changeant l'ordre des états dans l'espace d'état il faut préciser dans la matrice de transition placée en paramètre le nouvel ordre des états sur les lignes de la matrice ou les colonnes de la matrice et les états doivent obligatoirement être numériques (sous forme d'entiers). Nous effectuons ce genre de tests un petit peu en dessous.
+
+```{r}
+# on va maintenant faire une deuxième fonction qui calcule la probabilité invariante, dans le cas où la chaine est irreductible.
+
+probInv <- function (P){
+  if (comChain(P)$irr == T){
+    M = diag(nrow(P)) - t(P) # I - t(P)
+    diag(nrow(P)) - t(P)
+    M[nrow(P),]=1  
+    b=rep(0,nrow(P)); b[nrow(P)]=1
+    prob_inv=solve(M,b)
+    return(prob_inv)
+  }else{
+      print("la matrice n'est pas irreductible")
+      return ()
+    }
+  }
+
+```
+Sur cette deuxième fonction pour calculer la probabilité invariante, dans le cas où la chaine est irreductible, on utilise la méthode présentée dans le section **Code R1**.
+
+## Vérification du bon fonctionnement.
+
+Nous allons vérifier le bon fonctionnement de ces algorithmes sur trois exemples, dont on connait les résultats théoriques.
+Test sur la CMH présenté sur la slide 28. Cet exemple est détaillé dans le compte rendu, afin de mieux comprendre les sorties de cet algorithme.
+
+
+```{r}
+P = matrix(c(0,1/2,1/2,1/2,0,1/2,0,0,1),byrow=T,nrow=3)
+CM = new("markovchain", transitionMatrix = P)
+plot(CM,main="Graphe de P")
+```
+
+```{r}
+comChain(P)
+probInv(P)
+```
+Ici nous obtenons des résultats qui sont cohérents. Maintenant pour venir vérifier si notre algorithme fonctionne vraiment bien, nous allons changer l'ordre des coefficients de la matrice pour voir si nous obtenons toujours les mêmes résultats.
+
+```{r}
+PP = P[c(3,2,1),c(3,2,1)]
+row.names(PP) = c(3,2,1)
+comChain(PP)
+```
+```{r}
+PP = P[c(3,2,1),c(3,2,1)]
+colnames(PP) = c(3,2,1)
+comChain(PP)
+```
+
+Ici on obtient bien les mêmes résultats. effectuons un peu plus de tests.
+
+Ici on fait un deuxième test sur la deuxième CMH présente sur la slide 28.
+
+```{r}
+P = matrix(c(0,1/2,1/2,1/2,0,1/2,0,1,0),byrow=T,nrow=3)
+CM = new("markovchain", transitionMatrix = P)
+plot(CM,main="Graphe de P")
+```
+
+
+```{r}
+comChain(P)
+probInv(P)
+# vérification de la formule de la proba invariante.
+t(probInv(P))%*%P
+```
+
+
+
+On effectue un dernier test de cet algorithme, avec la CMH présenté un peu plus loin dans ce tp, dans le section Code R5
+
+
+```{r}
+P = matrix(c(16,0,0,0,0,0,4,8,4,0,0,0,1,4,4,4,2,1,0,0,4,8,0,4,0,0,16,0,0,0,0,0,0,0,0,16),byrow=T,nrow=6)
+P = 1/16*P
+CM = new("markovchain", transitionMatrix = P)
+plot(CM,main="Graphe de P")
+```
+Ici on peut voir la limite du package qui permet de faire des graphes, à savoir la lisibilité des graphes, quand le cardinal de l'espace d'états augmente.
+
+
+```{r}
+comChain(P)
+```
+
+Une fois de plus on obtient des résultats similaires à ceux obtenus théoriquement.
+On vient une fois de plus perturber un peu l'ordre de la matrice.
+
+```{r}
+PP = P[c(3,4,6,5,1,2),c(3,4,6,5,1,2)]
+row.names(PP) = c(3,4,6,5,1,2)
+comChain(PP)
+```
+```{r}
+PP = P[c(3,4,6,5,1,2),c(3,4,6,5,1,2)]
+colnames(PP) = c(3,4,6,5,1,2)
+comChain(PP)
+```
+
+Il semblerait que cet algorithme fonctionne !
+
+
+# Exercice 2 : une de Ehrenfest 
+
+```{r}
+N = 10000 # nombre de particules dans notre urne.
+
+# fonction qui va construire la matrice P
+constructP <- function (N){
+  
+  v1 = seq(N,1,-1) # surdiagonale.
+  v2 = seq(1,N,1) # sous diagonale.
+  
+  P = matrix(rep(0,(N+1)*(N+1)),nrow=N+1)
+  index_sup = cbind(seq(1,N,1),seq(2,N+1,1))
+  index_inf = cbind(seq(2,N+1,1),seq(1,N,1));
+  
+  P[index_sup] = v1
+  P[index_inf] = v2
+  
+  return(P/N)
+  
+}
+```
+
+
+```{r}
+constructP(6)
+```
+Fonction qui va modifier la dynamique de P pour avoir une matrice cette fois-ci $\tilde{P}$ apériodique.
+```{r}
+constructPP <-function(p,N){
+  P = constructP(N)
+  PP = p*P+(1-p)*diag(N+1)
+  return(PP)
+}
+```
+
+
+Ci dessous nous avons simplement voulu regarder si avec la chaine qui nous était donnée malgrés le fait que nous n'avions pas l'hypothèse d'irreductibilité, nous avions un semblant de convergeance en loi car l'hypothèse d'apériodicité et d'irreductibilité est simplement suffisante.
+
+```{r}
+N = 10
+k = 500
+P = constructP(N)
+
+X = replicate(k,simuMarkov(2,P,1000,FALSE))
+k_echantillon = X[1000,]
+
+nm = strtoi(names(table(k_echantillon)))
+t = table(k_echantillon)
+tab = rep(0,N+1)
+
+tab[nm] = t
+
+prob_inv = dbinom (c(0:N),N,1/2)
+
+
+sp = rep(c('fréquences empiriques','proba invariante'),each=N+1)
+df = data.frame(supp = sp,
+                val = c(0:N),
+                freq=c(tab/k,prob_inv))
+
+
+
+ggplot(data=df, aes(x=val, y=freq)) +
+  geom_col(aes(color = supp, fill = supp), position = position_dodge(0.8), width = 0.7)+
+  ggtitle("CV en Loi ?")
+
+```
+
+
+
+```{r}
+DTV <- function (N,x0,n){
+  # travaille sur la condition initiale
+  pi0 = rep(0,N+1)
+  pi0[x0] = 1 
+  p = N/(N+1)
+  # calcule de piN
+  PP = constructPP(p,N)
+  pik = pi0
+  
+  res = rep(0,N+1) # vecteur qui va contenir les distances 
+  pi_th = dbinom (0:N,N,1/2)
+  
+  for (k in c(1:n)){
+    pik = pik%*%PP
+    res[k] = (1/2)*sum(abs(pi_th-pik))
+  }
+
+  return (res)
+}
+```
+
+
+
+```{r}
+
+# utilisation du package rcolorbrewer.
+mp = brewer.pal(11,"Spectral")
+N = 150 ; n = 500
+l=1
+
+plot(DTV(N,101,n),
+     col=mp[l],
+     type="l",
+     panel.first = grid(),
+     xlab = "temps (n)",
+     ylab = "DTV_n",
+     main = "Etude CV en loi par DTV",
+     lwd = 3)
+l=l+1
+
+
+for (i in seq(91,1,-10)){
+  lines(DTV(N,i,n),
+        col=mp[l],
+        lwd = 2)
+  l = l+1
+}
+
+legend(x=400,y=1,
+       legend=(paste("X0=",seq(101,1,-10),sep="")),
+       col = mp,
+       lwd=2,
+       cex=0.7)
+
+```
+Ici on observe différentes vitesses de convergence en fonction de l'état initial $X_0$. Avec un vitesse de convergence qui semble être maximale pour $x_0 = \frac{N}{2}$.
+
+
+# Code R4
+
+Dans cette section, on va choisir d'étudier un processus de naissance et mort et notamment sa simulation.
+
+```{r}
+# l'entier n va définir la longueur de la chaine que l'on souhaite simuler.
+n = 100000
+
+# ici on va simuler notre bruit, donc la variable qui à chaque étape indique si on fait un pas en avant en arrière,
+# ou si on reste sur place
+z = sample(c(-1,0,1), n, replace=T, c(1/2,1/4,1/4))
+
+# maintenant on va commencer à "remplir" notre chaine de markov donc à faire en gros notre simulation.
+x = numeric(n); 
+
+x[1] = 0
+for (i in 2:n) { 
+  x[i] = abs(x[i-1] + z[i]) 
+}
+
+
+freq=table(x)/n
+barplot(freq,
+        names.arg=c(0:max(x)),
+        main="diagramme freq en temps long ")
+
+```
+On va maitenant comparer cet histogramme à la probabilité invariante. 
+
+```{r}
+N = 14
+p = rep(1/2,9)
+p = 3/4*p^c(1:9)
+p0 = 1/4
+prob_inv = c(p0,p)
+```
+On retrouve cette histoire de convergence en loi.
+
+```{r}
+sp = rep(c('fréquences empiriques','proba invariante'),each=10)
+df = data.frame(supp = sp,val = c(0:9),freq=c(c(freq[1:10]),prob_inv))
+ggplot(data=df, aes(x=val, y=freq)) +
+  geom_col(aes(color = supp, fill = supp), position = position_dodge(0.8), width = 0.7)+
+  ggtitle("Observation LFGN")
+
+```
+
+
+# Code R5
+
+La fonction qui est ci-dessous va venir faire des simualation d'une chaine de markov dont la matrice de transition est celle du dessus. et on va venir voir avec quelle fréquence on va tomber dans des états absorbants, donc avec quelle fréquence dans la chaine, on va se retrouver bloqué dans des états bloquants donc ici (1 et 6).
+
+
+```{r}
+
+# m nombre de trajectoires absorbées
+# x0 état initial de chacune des m trajectoires
+
+
+simuAbsorption = function(m,x0)
+{
+  
+  # portion de code à réutiliser pour générer des exceptions dans notre code.
+  if (x0 %in% c(1,6)) {stop("erreur : démarrage dans un état absorbant") }
+  
+  
+  #set.seed(1234)
+  
+  # numeric permet de créer un vecteur avec ici m 0.
+  tpsatteinte = numeric(m) # les m dates d’absorption
+  etatabsorbant = numeric(m) # liste des m états dans lesquels les absorptions ont lieu
+  for (j in 1:m) # m trajectoires terminées par une absorption en 1 ou 6
+  {
+      # pour chaque trajectoire absorbante
+    etatcourant <- x0 # état courant initialisé à l’état initial x0
+    t = 0 # initialisation de la date d’absorption
+    abs = FALSE
+    while(abs != TRUE)
+    {
+      # sélection du prochain état visité suivant P
+      # la sélection se fait en utilisant simplement la matrice de transition.
+      
+      if (etatcourant==1) prochain = 1 # on tombe ainsi dans un état absorbant.
+      
+      if (etatcourant==2)
+        prochain = sample(1:6, 1, prob=c(4,8,4,0,0,0))
+      if (etatcourant==3)
+        prochain = sample(1:6, 1, prob=c(1,4,4,4,2,1))
+      if (etatcourant==4)
+        prochain = sample(1:6, 1, prob=c(0,0,4,8,0,4))
+      if (etatcourant==5) 
+        prochain = 3
+      if (etatcourant==6) 
+        prochain = 6 # on tombe dans un état absorbant.
+      
+      # détermine si l’absorption a lieu
+      # la variable abs va nous dire si on a eu absorption et la variable t, va donner le temps d'absorption.
+      if ((prochain ==1) | (prochain ==6)) {abs = TRUE}
+      t = t+1
+      etatcourant = prochain
+    }
+    
+    # nous donne le temps avec que on se fasse absorber.
+    tpsatteinte[j] = t # date d’absorption pour la trajectoire No j
+    etatabsorbant[j] = etatcourant # état absorbant atteint par la trajectoire No j ca nous renseigne si on a été absorbé par 1 ou 6.
+  }
+  resultats = list(tpsatteinte=tpsatteinte,etatabsorbant=etatabsorbant)
+  return(resultats)
+}
+```
+
+
+
+
+
+
+```{r}
+res = simuAbsorption(10000,4) # Simulation de m=10000 trajectoires jqà absorption
+hist(res$tpsatteinte,
+     main = "Fréquence du temps d'attente" ,
+     prob=TRUE) # Histogramme des temps d’absorption
+
+mean(res$tpsatteinte) # Temps moyen d’absorption
+
+quantile(res$tpsatteinte, .95) # Quantile de niveau 95% des dates d’absorption
+
+table(res$etatabsorbant)/10000 # Proportion de trajectoires arrêtées dans un état absorbant
+```
+sur le premier histogramme, on peut voir en quelque sorte la densité (distribution) du temps d'attente de l'ensemble {1,6}.
+
+Les résultats analytiques sont ceux vus dans l'exerice 8 du TD. On peut voir quand même que le temps d'attente semble finis, et semble même dans l'ensemble, plutot court. 
+
+Il faut bien mettre en parallèle les résultats obtenus sur cet exercice, avec les résultats vus lors du TD 8.
+
+```{r}
+m = 10000
+par(mfrow=c(2,2))
+tmp_empirique = rep(0,4)
+
+for (i in c(2:5)){
+  res = simuAbsorption(10000,i) # Simulation de m=10000 trajectoires jqà absorption
+  hist(res$tpsatteinte,prob=TRUE,main = (paste("etat initial Xo =", i)),col = i,xlab="temps atteinte",
+        ylab="denisty") # Histogramme des temps d’absorption
+  tmp_empirique[i-1] = mean(res$tpsatteinte) # Temps moyen d’absorption
+  quantile(res$tpsatteinte, .95) # Quantile de niveau 95% des dates d’absorption
+  table(res$etatabsorbant)/m
+}
+
+tmp_empirique = round(tmp_empirique,3)
+```
+
+
+
+
+```{r}
+P = matrix(c(16,0,0,0,0,0,4,8,4,0,0,0,1,4,4,4,2,1,0,0,4,8,0,4,0,0,16,0,0,0,0,0,0,0,0,16),byrow=T,nrow=6)
+mA = round(solve(diag(4)-1/16*P[c(2,3,4,5),c(2,3,4,5)])%*%matrix(rep(1,4),nrow = 4,ncol=1),3)
+
+l = paste("x0=",
+          c(2:5),
+          sep="")
+
+df = data.frame(Etat_initiale = l,
+           Temps_moyen_th = mA,
+           Temps_moyen_Emp = tmp_empirique)
+
+w = formattable(df,list(
+  Temps_moyen_th = color_bar('#26C4EC') ,
+  Temps_moyen_Emp = color_bar('#26C4EC')
+))
+w
+
+```
+
+

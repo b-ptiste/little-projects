@@ -1,0 +1,841 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(expm)
+rm(list = ls())
+```
+
+
+# R1 : Processus de Poisson
+
+On commence par créer des fonctions qui permettent de simuler des HPP.
+Pour un HPP, il nous suffit d'avoir les temps de saut pour connaitre la trajectoire. En effet, le temps de saut Tn amènera dans l'état Yn = n.
+
+```{r}
+
+# input : 
+# t = temps de la simulation
+# l = paramètre de la loi exponentielle
+
+# output : les temps de sauts (T1,...Tn)
+
+HPP_sim_1 <- function(t,l){
+  
+  # le premier temps de saut se fait en t=0
+  T0 = 0
+  
+  # vecteur des k premiers temps de saut
+  Tk_1 = c(T0)
+  
+  # condition d'arret
+  stop = F 
+  
+  while(stop == F){
+    
+    # le temps de séjour dans l'état courant suit une loi Exp(lambda)
+    Sk = rexp(1,l)
+    
+    # le prochain saut Tk sera donc en Tk-1 + Sk
+    Tk = Sk+Tk_1[length(Tk_1)]
+  
+    if (t>Tk){
+      # le dernier saut Tk à lieux avant t donc on continue
+      Tk_1 = c(Tk_1,Tk)
+      
+    } else{
+      # on s'arrete car t <= Tk
+      # ce generateur peut poser problème si on a un processus explosif
+      # car si |t - Tk|<epsilon alors avec la precision machine
+      # t = Tk alors que t!=Tk
+      stop = T
+      
+      
+    }
+  }
+  
+  return(Tk_1)
+}
+
+```
+
+
+La première fonction de simulation n'utilise pas le calcul matricielle qui est rapide sur R.
+Cela vient du fait que l'on ne peut pas savoir quand on va dépasser la première fois t dans notre processus de sauts.
+
+Une manière d'optimiser cette méthode est de simuler des un nombre de temps de saut de longueur fixe et de manière à ce que le dernier temps de saut Tn ai de grandes chances d'être supérieur à t. Puis on viendra rogner le vecteur des (Tk) k dans {0,...,n} de manière a trouver n0 tel que Tn0<t et Tn0+1>t. Ainsi on retournera (Tk) k dans {0,...,n0}. 
+
+On peut se trouver dans un cas qui serait plutôt peu probable et où l'on aurait Tn<t. Dans ce cas on utilisera le premier simulation en utilisant le caractère Markov de régénération pour compléter le processus pour avoir ce que l'on veut.
+
+
+```{r}
+
+# input : 
+# t = temps de la simulation 
+# l = paramètre de la loi exponentielle
+
+# output : les temps de sauts (T1,...Tn)
+
+HPP_sim_2 <- function(t,l){
+  
+  # on cherche une valeur de n qui ne demande pas de completer le processus
+  # Ici on a pris 10*Espérance de la loi de Poisson de paramètre l*t
+  # car Xt suit une loi de Poisson de paramètre lt et l'espérance de cette loi est l*t
+  
+  n = 10*as.integer(l*t)
+  T0 = 0
+  Tk = c(T0)
+  # on simulte n v.a.i.i.d d de la loi Exp(l), ca sera les temps de séjour c'est à dire les (S1,...,Sn)
+  simu = rexp(n,l)
+  
+  # par définition des Tk
+  Tk = c(Tk,cumsum(simu))
+  
+  # vecteur de booléen qui permet de trouver le dernier indice tel que Tk<t
+  b = (Tk < t)
+  ind = sum(b) 
+  
+  
+  
+  
+  if (Tk[length(Tk)]<t){
+    # Cas que l'on cherche à éviter mais de probabilité non nulle
+    # si le dernier indice est inferieur à t alors on doit completer
+    
+    print("/!\ Utilisation de HPP_sim_1 pour compléter la trajectoire ")
+    T_k_next = HPP_sim_1(t-Tk[ind],l) + Tk[ind]
+    return(c(Tk,T_k_next))
+  }else{
+    return(Tk[1:ind])
+    
+  }
+  
+}
+
+```
+
+```{r}
+# test 
+HPP_sim_2(10,2)
+```
+
+
+Cette deuxième fonction permet aussi d'utiliser le calcul matricielle et d'éviter de faire des boucles.
+Elle utilise des résultats établis en TD (exercice 4).
+
+
+```{r}
+
+# input : 
+# t = temps de la simulation 
+# l = paramètre de la loi exponentielle
+
+# output : les temps de sauts (T1,...Tn)
+
+HPP_sim_3 <- function(t,l){
+  
+  n = rpois(1,l*t) # simulation de la valeur de Xt.
+  T0 = 0
+  Tk = c(T0)
+  if (n == 0){
+    return(Tk)
+    
+  } else {
+    U = runif(n,0,t)
+    
+    # on trie nos valeurs.
+    Tk = c(Tk,sort(U))
+    
+    return(c(Tk))
+  }
+}
+
+```
+
+
+```{r}
+
+# input : 
+# t = temps de la simulation 
+# l = paramètre de la loi exponentielle
+# n = nombre de trajectoire que l'on veut tracer sur le graphique
+
+# output : un graphique
+
+graphe_HPP <- function(t,l,n,version){
+  p = ggplot()
+  tps_exe = NULL
+  for(i in c(1:n)){
+    
+    # cette selection permet de savoir avec quel simulateur on affiche et de même de retourner le temps moyen de calcul de la méthode pour les n             #trajectoires
+    
+    # Rq : une méthode sera spécialement écrite pour étudier le temps de calcul dans la suite
+    
+    if(version ==1){
+        # premiere version qui affiche une trajectoire en utilisant le premier simulateur
+        # le simulateur qui utilise la boucle while
+      tps = Sys.time()
+      Tk = HPP_sim_1(t,l)
+      tps_exe = c(Sys.time()-tps,tps_exe)
+      
+    }
+    
+    else if(version ==2){
+        # deuxieme version qui affiche une trajectoire en utilisant le deuxieme simulateur
+      tps = Sys.time()
+      Tk = HPP_sim_2(t,l)
+      tps_exe = c(Sys.time()-tps,tps_exe)
+      
+    }
+    else if(version==3){
+        # troisieme version qui affiche une trajectoire avec le dernier simulateur
+      tps = Sys.time()
+      Tk = HPP_sim_3(t,l)
+      tps_exe = c(Sys.time()-tps,tps_exe)
+    
+    }else{
+      print("on ne peut pas afficher avec cette version il n'y a que 1, 2 et 3")
+      return(-1)
+    }
+    
+    states = c(0:(length(Tk)-1))
+    df = data.frame(states = states,
+                    times = Tk)
+    
+    p = p +
+      geom_step(data = df , aes(x = times , y = states), color=i)+
+      geom_point(data=df, mapping=aes(x=times, y=states), color=i) + ggtitle(paste("Simulation du processus de Poisson avec la version",version,"et avec t = ",t,"et lambda = ",l))
+  }
+  df = data.frame(x=c(0:t),y=c(0:t)*l)
+
+  print(paste("temps d'execution moyen pour",n,"tajectoire(s) du simulateur",version,"est : ",mean(tps_exe),"secondes"))
+  plot(p)
+}
+```
+
+```{r}
+# affichage avec la version 2
+t = 20
+l = 2
+n = 3
+version = 2
+graphe_HPP(t,l,n,version)
+```
+
+```{r}
+# affichage avec la version 3
+t = 20
+l = 2
+n = 3
+version = 3
+graphe_HPP(t,l,n,version)
+```
+
+```{r}
+# permet d'etudier le temps de calcul des trois simulateurs précédents
+
+# input : 
+# n = nombre de trajectoire que l'on veut étudier
+
+# output : temps de d'execution moyen des simulateurs en fonction de méthode
+
+time_process = function(n,t,l){
+  tps1_vec=NULL
+  tps2_vec=NULL
+  tps3_vec=NULL
+  for(i in c(1:n)){
+    tps1 = Sys.time()
+    HPP_sim_1(t,l)
+    tps1_vec = c(tps1_vec,Sys.time()-tps1)
+    
+    tps2 = Sys.time()
+    HPP_sim_2(t,l)
+    tps2_vec = c(tps2_vec,Sys.time()-tps2)
+    
+    tps3 = Sys.time()
+    HPP_sim_3(t,l)
+    tps3_vec = c(tps3_vec,Sys.time()-tps3)
+  }
+  print(paste("Le temps d'execution moyen pour HPP_sim_1 est",mean(tps1_vec),"secondes"))
+  print(paste("Le temps d'execution moyen pour HPP_sim_2 est",mean(tps2_vec),"secondes"))
+  print(paste("Le temps d'execution moyen pour HPP_sim_3 est",mean(tps3_vec),"secondes"))
+}
+```
+
+
+```{r}
+
+# Etude des temps de calcul
+n = 1000
+t = 50
+l = 20
+time_process(n,t,l)
+```
+
+
+```{r}
+t=20
+par(mfrow = c(3,3))
+l_vect = c(1,2,5,20)
+for (l in l_vect){
+  graphe_HPP(t,l,10,2)
+  graphe_HPP(t,l,10,3)
+}
+
+```
+
+On verifie que l'on simule bien une varible de la loi de Poisson
+Pour cela on regarde si en sur n échantillon si en ne gardant que la valeur de l'état occupé en t. Si cet échantillon suit bien un loi de Poisson(l*t)
+
+On peut pour cela comparer les fonctions de répartition théoriques avec empiriques et l'histogramme de fréquence avec la densité.
+
+```{r}
+# test de la fonction avec HPP_sim_1
+
+par(mfrow = c(2,4))
+l = 4
+t = 100
+
+# ici on vient petit à petit compléter l'échantillon nommé simulation
+# dans un premier temps celui ci comporte 100 valeurs, puis on vient 
+# ajouter 500 valeurs donc on aura 600 valeur
+# En effet la phylosophie n'est pas de reprendre la simulation à zero
+# entre deux comparaisons mais de voir l'évolution avec le nombre de
+# valeurs
+
+simulation = NULL
+for(n in c(100,400,1000,5000)){
+  for(i in c(1:n)){
+  simulation = c(simulation,(length(HPP_sim_1(t,l))))
+}
+title = c("t = 100 et de taille",toString(length(simulation)))
+hist(simulation,probability =T,nclass=50,main = title)
+lines(c(1:max(simulation)),dpois(c(1:max(simulation)),l*t),col="red")
+
+title = 
+plot(ecdf(simulation),main=title)
+lines(c(300:500),ppois(c(300:500),t*l),col="red",lwd=2)
+}
+```
+
+
+```{r}
+# test de la fonction avec HPP_sim_2
+
+par(mfrow = c(2,4))
+l = 4
+t = 100
+n = 10000
+simulation = NULL
+
+for(n in c(100,900,10000,50000)){
+  
+  for(i in c(1:n)){
+  simulation = c(simulation,(length(HPP_sim_2(t,l))))
+}
+title = c("t = 100 et de taille",toString(length(simulation)))
+hist(simulation,probability =T,nclass=50,main = title)
+lines(c(1:max(simulation)),dpois(c(1:max(simulation)),l*t),col="red")
+
+title = 
+plot(ecdf(simulation),main=title)
+lines(c(300:500),ppois(c(300:500),t*l),col="red",lwd=2)
+}
+```
+
+```{r}
+# test de la fonction avec HPP_sim_3
+
+par(mfrow = c(2,4))
+l = 4
+t = 100
+n = 10000
+simulation = NULL
+
+for(n in c(100,900,10000,50000)){
+  
+  for(i in c(1:n)){
+  simulation = c(simulation,(length(HPP_sim_3(t,l))))
+}
+title = c("t = 100 et de taille",toString(length(simulation)))
+hist(simulation,probability =T,nclass=50,main = title)
+lines(c(1:max(simulation)),dpois(c(1:max(simulation)),l*t),col="red")
+
+title = 
+plot(ecdf(simulation),main=title)
+lines(c(300:500),ppois(c(300:500),t*l),col="red",lwd=2)
+}
+```
+
+# R2 : Statistical Analysis
+
+Ici on calcul un intervalle de confiance pour notre estimateur du maximum de vraissemblance.
+Pour son calcul on aura besoin de simuler un HPP et de connaitre les Tk.
+
+```{r}
+# inputs : 
+# Tk : les temps de saut pour un HPP
+# l : paramètre de la loi exponentielle
+
+graph_IC <- function(Tk,l,t){
+  
+  lambda_est = NULL
+  U_est = NULL
+  L_est = NULL
+  
+
+  
+  # on ne commence par à zero car ici ce sont des propriétés asymptotiques
+  
+  for (i in c(1:length(Tk))){
+    lambda_est = c(lambda_est,(i-1)/Tk[i+1])
+    U_est = c(U_est,lambda_est[i]/(1-qnorm(0.975)/sqrt(i)))
+    L_est = c(L_est,lambda_est[i]/(1+qnorm(0.975)/sqrt(i)))
+  }
+  n = length(lambda_est)
+  df_plot = data.frame(lambda_est = lambda_est[as.numeric(n/10):n],
+                  U_est = U_est[as.numeric(n/10):n],
+                  L_est = L_est[as.numeric(n/10):n],
+                  x = c(as.numeric(n/10):n))
+  
+  p = ggplot(data = df_plot , aes(x))+
+    geom_line(aes(y = lambda_est), colour="blue") + 
+    geom_ribbon(aes(ymin=L_est, ymax=U_est), alpha=0.2)+
+    geom_hline(yintercept = l)+
+    ggtitle(paste("IC sur l'estimateur de lambda = ",l,"et t = ",t))+
+    xlab("nombre de sauts")+
+    ylab("estimation de lambda")
+  plot(p)
+}
+```
+
+Test :
+```{r}
+t = 1000
+for(l in c(2,8,50)){
+  Tk = HPP_sim_3(t,l)
+  graph_IC(Tk,l,t)
+}
+
+```
+
+
+# R3 : Simulation of sample paths of M/M/K queueing systems
+
+## Fonction qui nous simule une trajectoire du processus
+```{r}
+SamplePaths <- function(Y_0,K,lambda,mu,t){
+  # Input : 
+  # Y_0 : nombre de clients à l'instant t=0
+  # K : nombre de serveurs
+  # lambda : paramètres de la loi exponentielle du temps d'arrivée des clients
+  # mu : paramètre de la loi exponentielle du temps de service des clients
+  # t : longueur de la simulation 
+  
+  # Output : les temps de saut ainsi que les états occupés
+  
+  path = c(Y_0)
+  time = c(0)
+  #On se donne Q, le générateur
+  Q = matrix(c(-lambda,(1:K)*mu,rep(lambda,K+1)),ncol=2,byrow = FALSE)
+  #les paramètres des loi exponentielles
+  q = c((lambda + (0:K)*mu))
+  #La matrice du processus discret {Y_n}
+  P = abs(Q/q)
+  #rajouter les 0 : P(i,i)
+  P = matrix(c(P[,1],rep(0,K+1),P[,2]),ncol = 3,byrow = FALSE)
+  #La loi sachant Y_0 = 0
+  P[1,] = c(0,0,1)
+  
+  temps = 0
+  duree_sej = 0
+  i = Y_0
+  while(temps < t){
+    if(i < K){
+      #Tirage de la durée de séjour
+      duree_sej = rexp(1,q[i+1]) # i+1 car les indices commencent à 1 en R
+      #Tirage dans (i-1,i,i+1) avec proba de tirage Y=i égale à 0.
+      i = sample(c(i-1,i,i+1),1,prob = P[i+1,])
+    }
+    else{
+      #Tirage de la durée de séjour
+      duree_sej = rexp(1,q[K+1])
+      #Tirage dans (i-1,i,i+1) avec proba de tirage Y=i égale à 0.
+      i = sample(c(i-1,i,i+1),1,prob = P[K+1,]) 
+      
+    }
+    path = c(path,i)
+    time = c(time,duree_sej)
+    temps = temps + duree_sej
+    
+  }
+  
+  time = cumsum(time)
+  
+  #au dernier temps, on dépasse t donc en dernier état on met l'état occupé et t_fin = t  
+  path[length(path)] = path[length(path)-1]
+  time[length(time)] = t
+  
+  return(list(time = time,path = path))
+  
+}
+```
+
+
+## Fonction qui trace la trajectoire à partir de la simulation
+```{r}
+plotPath <- function(time,path){
+  df = data.frame(Temps = time,
+                  Chemin = path)
+  
+  ggplot()+
+    geom_step(data = df , aes(x = Temps , y = Chemin))+
+    geom_point(data=df, mapping=aes(x=Temps, y=Chemin), color="red")
+}
+```
+
+
+## 1ères simulations
+```{r}
+res1 = SamplePaths(Y_0 = 0,K = 3,lambda = 2,mu = 2,t = 10)
+plotPath(res1$time,res1$path)
+
+res2 = SamplePaths(Y_0 = 0,K = 7,lambda = 2,mu = 2,t = 10)
+plotPath(res2$time,res2$path)
+```
+
+## Cas Lambda/(K*mu) >= 1
+```{r}
+res1 = SamplePaths(Y_0 = 0,K = 3,lambda = 25,mu = 3,t = 20)
+plotPath(res1$time,res1$path)
+
+res2 = SamplePaths(Y_0 = 0,K = 3,lambda = 30,mu = 3,t = 20)
+plotPath(res2$time,res2$path)
+```
+
+## Cas Lambda/(K*mu) < 1
+```{r}
+res1 = SamplePaths(Y_0 = 0,K = 3,lambda = 5,mu = 3,t = 20)
+plotPath(res1$time,res1$path)
+
+res2 = SamplePaths(Y_0 = 0,K = 10,lambda = 5,mu = 3,t = 20)
+plotPath(res2$time,res2$path)
+
+res2 = SamplePaths(Y_0 = 0,K = 20,lambda = 5,mu = 3,t = 20)
+plotPath(res2$time,res2$path)
+```
+
+## Fonction pour réaliser un n-échantillon de la loi de X_t
+```{r}
+echantillon_loi_Xt = function(t,Y_0,n,K,lambda,mu){
+  
+  real = c()
+  Data = replicate(n,SamplePaths(Y_0,K,lambda,mu,t)$path)
+  for (i in Data){
+    #On récupère l'état occupé à la date finale t
+    real = c(real,i[length(i)])
+  }
+  return(real)
+}
+```
+
+## Fonction qui calcule la probabilité invariante
+```{r}
+ProbaInv <- function(lambda,mu,K,nb_max_etats){
+  # nb_max_etats : nombre d'états sur lesquels on va comparer la probabilité invariante à nos approximations
+  
+  if(lambda >= K*mu){
+    return('Pas de probabilité invariante sous cette condition')
+  }
+  
+  i_max = nb_max_etats - 1
+  rho = lambda/(K*mu)
+  ratio = lambda/mu
+  S = sum(ratio^(0:(K-1))/factorial(0:(K-1))) + (ratio^K)/(factorial(K)*(1-rho))
+
+  if(i_max <= K){
+    return((1/S)*(ratio^(0:i_max))/factorial((0:i_max)))
+  }
+  else{
+    return(c((1/S)*(ratio^(0:K))/factorial((0:K)),(1/S)*(ratio^K/factorial(K))*rho^(1:(i_max-K))))
+  }
+}
+```
+
+## Comparaison sur un unique barplot des deux approximations et de la probabilité invariante
+```{r}
+comparaison_pi <- function(t,Y_0,n,K,lambda,mu){
+  if(lambda >= K*mu){
+    return('Pas de convergence sous cette condition')
+  }
+  
+  t1 <- Sys.time()
+  #Tirage des X_t pour t grand 
+  assymptotic_distrib = echantillon_loi_Xt(t,Y_0,n,K,lambda,mu)
+  t2 <- Sys.time()
+  print(paste('Temps Convergence Loi',t2 - t1))
+  
+  
+  #Convergence en Loi de Pi_t vers Pi
+  frequency_assymptotic_distrib = as.numeric(table(assymptotic_distrib)/length(assymptotic_distrib))
+  
+  #nb d'états différents sur lesquels il suffit de comparer
+  nb_etats_loi_assymp = length(frequency_assymptotic_distrib)
+  
+  t1 <- Sys.time()
+  #Approximation de pi par la loi forte des grands nombres pour CTMC
+  real = SamplePaths(Y_0,K,lambda,mu,t)
+  
+  nb_etats_real = length(as.numeric(table(real$path)))
+  LFGN = c()
+  for(i in 0:(nb_etats_real-1)){
+    
+    ind = which(real$path == i)
+    #si il y a l'indice où T = t, pas d'indice "plus loin" donc on supprime sans perte d'info
+    if(length(real$path) %in% ind){
+      ind = ind[-length(ind)]
+    }
+    
+    freq_duree_sej_i = sum(real$time[ind+1]-real$time[ind])/t
+    LFGN = c(LFGN,freq_duree_sej_i)
+  }
+  t2 <- Sys.time()
+  print(paste('Temps Convergence LFGN',t2 - t1))
+
+  nb_etats = min(c(nb_etats_loi_assymp,nb_etats_real))
+  
+  LFGN = LFGN[1:nb_etats]
+   frequency_assymptotic_distrib = frequency_assymptotic_distrib[1:nb_etats]
+  
+  #Loi exacte de Pi
+  proba_inv = ProbaInv(lambda,mu,K,nb_etats)
+  
+  print(paste("Nombre d'états où l'on compare les lois",nb_etats))
+  
+  print(paste('Conv LFGN',sum(abs(proba_inv-LFGN))))
+  
+  print(paste('Conv Loi',sum(abs(proba_inv-frequency_assymptotic_distrib))))
+  
+  df = data.frame(Loi = c(rep("Loi assymptotique",length(frequency_assymptotic_distrib)),rep("Probabilité invariante",length(proba_inv)),rep("LFGN",length(LFGN))), Etats = c(seq(from = 0, to = (length(proba_inv)-1)),seq(from = 0, to = (length(proba_inv)-1)),seq(from = 0, to = (length(proba_inv)-1))),Densite = c(frequency_assymptotic_distrib,proba_inv,LFGN))
+  
+  title <- paste("Étude de la convergence du processus M/M/K")
+  p <- ggplot(data=df, aes(x=Etats, y=Densite, fill=Loi)) +
+  geom_bar(stat="identity", color="black", position=position_dodge())+
+  theme_minimal()  + ggtitle(title) + theme(plot.title = element_text(hjust = 0.5))
+  p + scale_fill_manual(values=c('#999999','#E69F00','#0066FF'))
+}
+```
+
+#### Test
+
+
+**Cette partie peut prendre du temps à s'executer**.
+
+```{r}
+n=500
+# n = 200 # à décommenter si n = 500 prend trop de temps/ressources
+comparaison_pi(10,0,n,2,5,5)
+comparaison_pi(50,0,n,2,5,5)
+comparaison_pi(500,0,n,2,5,5)
+```
+
+```{r}
+n=500
+# n = 200 # à décommenter si n = 500 prend trop de temps/ressources
+comparaison_pi(10,0,n,10,5,20)
+comparaison_pi(50,0,n,10,5,20)
+comparaison_pi(500,0,n,10,5,20)
+```
+
+
+#R4 : A basic implementation in the finite state space case
+
+## Loi de X_t tronquée avec une précision fixée
+```{r}
+pi_t <-function(epsilon,lambda_chap,t,alpha,P){
+  # Input
+  # epsilon : précision souhaitée
+  # lambda_chap : paramètre d'uniformisation
+  # t : temps d'étude 
+  # alpha : loi initiale
+  # P : matrice du processus uniformisé
+  
+  # Output : valeur tronquée de Pi_t
+  
+  #n à partir de la précision epsilon
+  n = qpois(p = 1-epsilon,lambda_chap*t)
+  #Vecteur de la loi de X_t
+  res = matrix(rep(0,nrow(P)),nrow  = 1)
+  # Matrice des puissances, identité pour n = 0
+  P_p = diag(rep(1,nrow(P)))
+  for(i in 0:n){
+    res <- res + exp(-lambda_chap*t)*(lambda_chap*t)^(i)*(alpha%*%P_p)/factorial(i)
+    #matrice des puissances
+    P_p = P_p%*%P 
+  }
+  return(res)
+}
+```
+
+### Exemple tirée de la diapo 77 Cours
+```{r}
+Q = matrix(c(-2,1,1,1,-1,0,2,1,-3),nrow = 3,byrow = TRUE)
+#Son unique probabilité invariante
+pi = c(0.375,0.5,0.125)
+#Données pour la troncature
+lambda_chap = 4
+#Matrice du processus discret
+P_chap = diag(rep(1,nrow(Q))) + (1/lambda_chap)* Q
+#Loi initiale, peut importe laquelle si convergence (on évite la probabilité invariante)
+alpha = matrix(c(1/2,1/4,1/4),nrow = 1)
+```
+
+#### On va tester pour plusieurs t
+```{r}
+
+epsilon = 1e-1
+for(t in c(0.5,5,10,30)){
+  loi_X_t = pi_t(epsilon,lambda_chap,t,alpha,P_chap)/sum(pi_t(epsilon,lambda_chap,t,alpha,P_chap))
+  P_t_exacte = alpha%*%expm(Q*t)
+  
+  
+  df = data.frame(Loi = c(rep("Loi Approchée",length(loi_X_t)),rep("Loi Exacte",length(loi_X_t))), Etats = c(seq(from = 1, to = length(loi_X_t)),seq(from = 1, to = length(loi_X_t))),Probabilite = c(loi_X_t,P_t_exacte))
+
+  title <- paste("t =",t)
+  p <- ggplot(data=df, aes(x=Etats, y=Probabilite, fill=Loi)) +
+  geom_bar(stat="identity", color="black", position=position_dodge())+
+  theme_minimal()  + ggtitle(title) + theme(plot.title = element_text(hjust = 0.5))
+  p + scale_fill_manual(values=c('#999999','#E69F00'))
+  print(p)
+}
+```
+
+#### Comparaison à Probabilité invariante
+```{r}
+for(t in c(0.5,5,10,30)){
+  loi_X_t = pi_t(epsilon,lambda_chap,t,alpha,P_chap)/sum(pi_t(epsilon,lambda_chap,t,alpha,P_chap))
+  P_t_exacte = alpha%*%expm(Q*t)
+  
+  
+  df = data.frame(Loi = c(rep("Loi Approchée",length(loi_X_t)),rep("Loi Exacte",length(loi_X_t)),rep("Loi Limite",length(loi_X_t))),Etats = c(seq(from = 1, to = length(loi_X_t)),seq(from = 1, to = length(loi_X_t)),seq(from = 1, to = length(loi_X_t))),Probabilite = c(loi_X_t,P_t_exacte,pi))
+  title <- paste("t =",t)
+  p <- ggplot(data=df, aes(x=Etats, y=Probabilite, fill=Loi)) +
+  geom_bar(stat="identity", color="black", position=position_dodge())+
+  theme_minimal()  + ggtitle(title) + theme(plot.title = element_text(hjust = 0.5))
+  p + scale_fill_manual(values=c('#999999','#E69F00'))
+  print(p)
+}
+```
+
+#### Comparaison pour plusieurs Epsilon
+```{r}
+t = 0.5
+for(eps in c(1e-1,1e-2,1e-3)){
+
+  loi_X_t = pi_t(eps,lambda_chap,t,alpha,P_chap)/sum(pi_t(eps,lambda_chap,t,alpha,P_chap))
+  P_t_exacte = alpha%*%expm(Q*t)
+  
+  df = data.frame(Loi = c(rep("Loi Approchée",length(loi_X_t)),rep("Loi Exacte",length(loi_X_t))), Etats = c(seq(from = 1, to = length(loi_X_t)),seq(from = 1, to = length(loi_X_t))),Probabilite = c(loi_X_t,P_t_exacte))
+  title <- paste("Epsilon =",eps)
+  p <- ggplot(data=df, aes(x=Etats, y=Probabilite, fill=Loi)) +
+  geom_bar(stat="identity", color="black", position=position_dodge())+
+  theme_minimal()  + ggtitle(title) + theme(plot.title = element_text(hjust = 0.5))
+  p + scale_fill_manual(values=c('#999999','#E69F00'))
+  print(p)
+}
+```
+
+#### On peut essayer de traçer l'erreur en fonction du choix d'epsilon
+```{r}
+t = 0.5
+erreur = c()
+for(eps in c(1e-1,1e-2,1e-3)){
+
+  loi_X_t = pi_t(eps,lambda_chap,t,alpha,P_chap)/sum(pi_t(eps,lambda_chap,t,alpha,P_chap))
+  P_t_exacte = alpha%*%expm(Q*t)
+  
+  erreur = c(erreur,sum(abs(loi_X_t-P_t_exacte)))
+}  
+  plot(erreur,type = 'l',xlim = c(0.8,3.2))
+  text(seq(1:3)+0.02,erreur,round(erreur,5),col = 'red')
+
+```
+
+### Nouvel Exemple 
+```{r}
+Q = matrix(c(-2,1,1,0,0,-1,1,0,0,0,-1,1,1,0,0,-1),nrow = 4,byrow = TRUE)
+#Son unique probabilité invariante
+pi = c(1/6,1/6,1/3,1/3)
+
+#Matrice du process discret
+P_chap = diag(rep(1,nrow(Q))) + (1/lambda_chap)* Q
+#Loi initiale, peut importe laquelle si convergence (éviter loi limite)
+alpha = matrix(c(1/8,1/4,1/4,3/8),nrow = 1)
+```
+
+#### On va tester pour plusieurs t
+```{r}
+#Données pour la troncature
+lambda_chap = 4
+epsilon = 1e-1
+for(t in c(0.5,5,10,30)){
+  loi_X_t = pi_t(epsilon,lambda_chap,t,alpha,P_chap)/sum(pi_t(epsilon,lambda_chap,t,alpha,P_chap))
+  P_t_exacte = alpha%*%expm(Q*t)
+  
+  
+  df = data.frame(Loi = c(rep("Loi Approchée",length(loi_X_t)),rep("Loi Exacte",length(loi_X_t))), Etats = c(seq(from = 1, to = length(loi_X_t)),seq(from = 1, to = length(loi_X_t))),Probabilite = c(loi_X_t,P_t_exacte))
+  
+  title <- paste("t =",t)
+  p <- ggplot(data=df, aes(x=Etats, y=Probabilite, fill=Loi)) +
+  geom_bar(stat="identity", color="black", position=position_dodge())+
+  theme_minimal()  + ggtitle(title) + theme(plot.title = element_text(hjust = 0.5))
+  p + scale_fill_manual(values=c('#999999','#E69F00'))
+  print(p)
+}
+```
+
+#### Comparaison à Probabilité invariante
+```{r}
+for(t in c(0.5,5,10,30)){
+  loi_X_t = pi_t(epsilon,lambda_chap,t,alpha,P_chap)/sum(pi_t(epsilon,lambda_chap,t,alpha,P_chap))
+  P_t_exacte = alpha%*%expm(Q*t)
+  
+  
+  df = data.frame(Loi = c(rep("Loi Approchée",length(loi_X_t)),rep("Loi Exacte",length(loi_X_t)),rep("Loi Limite",length(loi_X_t))),Etats = c(seq(from = 1, to = length(loi_X_t)),seq(from = 1, to = length(loi_X_t)),seq(from = 1, to = length(loi_X_t))),Probabilite = c(loi_X_t,P_t_exacte,pi))
+
+  title <- paste("t =",t)
+  p <- ggplot(data=df, aes(x=Etats, y=Probabilite, fill=Loi)) +
+  geom_bar(stat="identity", color="black", position=position_dodge())+
+  theme_minimal()  + ggtitle(title) + theme(plot.title = element_text(hjust = 0.5))
+  p + scale_fill_manual(values=c('#999999','#E69F00'))
+  print(p)
+}
+```
+
+#### On peut essayer de traçer l'erreur en fonction du choix d'epsilon
+```{r}
+t = 0.5
+erreur = c()
+for(eps in c(1e-1,1e-2,1e-3)){
+
+  loi_X_t = pi_t(eps,lambda_chap,t,alpha,P_chap)/sum(pi_t(eps,lambda_chap,t,alpha,P_chap))
+  P_t_exacte = alpha%*%expm(Q*t)
+  
+  erreur = c(erreur,sum(abs(loi_X_t-P_t_exacte)))
+}  
+  plot(erreur,type = 'l',xlim = c(0.8,3.2))
+  text(seq(1:3)+0.02,erreur,round(erreur,6),col = 'red')
+
+```
+
+
+
+
+
+
+
+
+

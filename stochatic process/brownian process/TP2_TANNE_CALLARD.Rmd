@@ -1,0 +1,305 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# TP 2 - Mouvement brownien
+
+```{r}
+library(pracma)
+library(ggplot2)
+```
+
+## i 
+
+**Nous avons diminué (par rapport au compte rendu) certaines valeurs de paramètres N et M pour que le code s'execute plus rapidement**
+
+Simulation du processus de Markov $X_k^N~pour~k~\in \{0,...,N\}$.
+
+```{r}
+simulation_MC = function(x_0,N,T_end){
+  Y = c(x_0)
+  
+  for(i in c(1:(N*T_end-1))){
+    # si on atteint un état absorbant on peut retourner la trajectoire
+    if(Y[i]>=1){
+      Y = c(Y ,rep(1,N*T_end-length(Y)))
+      return(list(hitting_time=i/N,path=Y ))
+      
+    }
+    if(Y[i]<=0){
+      Y  = c(Y ,rep(0,N*T_end-length(Y )))
+      return(list(hitting_time=i/N,path=Y ))
+      
+    }
+    # sinon on continue de simuler le processus de Markov
+    Y = c(Y,rbinom(1,size=N,prob=Y[i])/N)
+    
+  }
+  return(list(hitting_time=i/N,path=Y ))
+  
+}
+```
+
+Pour on en déduit une approximation du processus continue $X^N(t)$. Pour cela, on ajoute des points en faisant une interpolation
+
+```{r}
+simulation_MC_countinous = function(sim){
+  N = length(sim)
+  X_c = NULL
+  # permet d'enrichir le procede
+  for(i in c(1:(N-1))){
+    t = c((i-1):i)/N
+    X_inter = sim[i]+(sim[i]-sim[i-1])*(N*t-(i-1))
+    X_c = c(X_c,X_inter)
+    
+  }
+  return(X_c)
+}
+```
+
+On regarde que les deux trajectoires coincident
+
+```{r}
+sim = simulation_MC(0.5,1000,10)$path
+sim_inter = simulation_MC_countinous(sim)
+temps = seq(0,10,10/10000)[-length(sim)]
+plot(temps,sim,type="l",lwd = 2)
+lines(seq(0,10,10/length(sim_inter))[-length(sim_inter)],sim_inter,col=2,lty=3)
+```
+
+
+
+
+
+
+Tracer de quelques trajectoires avec des valeurs de N et des conditions intiales qui varient.
+
+
+```{r}
+T_end = 10
+t = 0
+
+for(N in c(1000,2000,5000,10000)){
+  p = ggplot()
+  i = 1
+  
+  for(x in seq(0.1,0.5,0.1)){
+    sim = simulation_MC(x,N,T_end)$path
+    inter = simulation_MC_countinous(sim)
+    v = which(inter%in%c(0,1))[1]
+    data = data.frame(temps = seq(0,T_end,T_end/length(inter))[-1],sim=inter)
+    p = p + geom_line(data = data , aes(x = temps , y = sim),col = i)
+    p = p + geom_vline(xintercept=T_end*v/length(inter),col=i)
+    p = p + geom_hline(yintercept=x,col=i)
+    i = i+1
+  }
+  plot(p)
+}
+
+```
+
+
+
+
+
+# ii
+
+On fait une fonction qui permet de résoudre la SDE avec la méthode de Euler
+
+```{r}
+
+euler_Scheme_SDE <- function(X0,T_max,N){
+  traj  = c(X0)
+  etat_courant = X0
+  h = T_max/N
+  #Les acroissements gaussiens
+  b = rnorm(N,0,sqrt(h))
+  
+  for(k in seq(1,N)){
+    # on traite les cas <0 et >1 car sinon on se retrouve avec des racines non définies
+    if(etat_courant <=0){
+      traj = c(traj,rep(0,N+1-length(traj)))
+      return(list(hitting_time=k*h,path=traj))
+    }else if(etat_courant >=1){
+      traj = c(traj,rep(1,N+1-length(traj)))
+      return(list(hitting_time=k*h,path=traj))
+    }else{
+      etat_courant <- etat_courant + sqrt(etat_courant*(1-etat_courant))*b[k]
+      traj <- c(traj,etat_courant)
+    }
+  }
+  return(list(hitting_time=k*h,path=traj))
+}
+
+```
+
+On trace des trajectoires
+
+```{r}
+T_end = 10
+t = 0
+
+for(N in c(100000,100000,1000000)){
+  p = ggplot()
+  i = 1
+  
+  for(x in seq(0.1,0.5,0.1)){
+    sim = euler_Scheme_SDE(x,T_end,N)$path
+    v = which(sim%in%c(0,1))[1]
+    data = data.frame(temps = seq(0,T_end,T_end/length(sim))[-1],sim=sim)
+    p = p + geom_line(data = data , aes(x = temps , y = sim),col = i)
+    p = p + geom_vline(xintercept=T_end*v/length(sim),col=i)
+    p = p + geom_hline(yintercept=x,col=i)
+    i = i+1
+  }
+  plot(p)
+}
+```
+
+Pour T = 10, on regarde la répartition des temps d'arrêt pour atteindre une proportion de 0 ou 1.
+
+```{r}
+x = 0.5
+hitting_time = replicate(10000,euler_Scheme_SDE(x,10,10000)$hitting_time)
+hist(hitting_time)
+sum(hitting_time=10)
+```
+
+
+
+
+#iii
+
+Dans cette partie nous allons simuler un échantillon de temps d'arrêt et faire la moyenne pour avoir une estimation de l'esperance. Nous utilisons la méthode de diffusion.
+
+```{r}
+simu = NULL
+theori = NULL
+x0 = seq(0.1,0.9,0.1)
+m = 1000
+T_end = 10
+N = 100
+for(x in x0){
+  simu = c(simu,mean(replicate(m,euler_Scheme_SDE(x,T_end,N)$hitting_time)))
+  theori = c(theori,-2*(x*log(x)+(1-x)*log(1-x)))
+}
+
+```
+
+```{r}
+df_plot = data.frame(y = c(simu,theori),type =  c(rep("simu",length(x0)),rep("theori",length(x0))),x0 = rep(x0,2))
+
+
+ggplot(data=df_plot, aes(x=x0, y=y, fill=type)) +
+geom_bar(stat="identity", position=position_dodge())
+```
+
+On compare si la moyenne empirique est un bon estimateur de l'espérance.
+
+```{r}
+hit_time = NULL
+m = 1000
+T_end = 10
+N = 1000
+t = seq(0,1,1/100)
+for(x in t){
+  hit_time = c(hit_time,mean(replicate(m,euler_Scheme_SDE(x,T_end,N)$hitting_time)))
+}
+
+
+p = ggplot()
+
+data = data.frame(temps = t,hit_time_empirique=hit_time,theorique = -2*(t*log(t)+(1-t)*log(1-t)))
+p = p + geom_line(data = data , aes(x = temps , y = hit_time_empirique),col = 1)
+p = p + geom_line(data = data , aes(x = temps , y = theorique),col = 2)
+plot(p)
+
+```
+
+## iv
+
+
+Dans cette partie nous allons simuler un échantillon de temps d'arrêt et faire la moyenne pour avoir une estimation de l'esperance. Nous utilisons le processus de Markov.
+```{r}
+simu = NULL
+theori = NULL
+m = 1000
+N = 1000
+T_end = 10
+x0 = seq(0.1,0.9,0.1)
+for(x in x0){
+  simu = c(simu,mean(replicate(m,simulation_MC(x,N,T_end)$hitting_time)))
+  theori = c(theori,-2*(x*log(x)+(1-x)*log(1-x)))
+}
+```
+
+
+```{r}
+df_plot = data.frame(y = c(simu,theori),type =  c(rep("simu",length(x0)),rep("theori",length(x0))),x0 = rep(x0,2))
+
+
+ggplot(data=df_plot, aes(x=x0, y=y, fill=type)) +
+geom_bar(stat="identity", position=position_dodge())
+```
+
+On compare si la moyenne empirique est un bon estimateur de l'espérance.
+
+
+```{r}
+hit_time = NULL
+m = 1000
+T_end = 10
+N = 1000
+t = seq(0,1,1/100)
+for(x in t){
+  hit_time = c(hit_time,mean(replicate(m,simulation_MC(x,T_end,N)$hitting_time)))
+}
+
+
+p = ggplot()
+
+data = data.frame(temps = t,hit_time_empirique=hit_time,theorique = -2*(t*log(t)+(1-t)*log(1-t)))
+p = p + geom_line(data = data , aes(x = temps , y = hit_time_empirique),col = 1)
+p = p + geom_line(data = data , aes(x = temps , y = theorique),col = 2)
+plot(p)
+
+```
+
+
+
+
+
+## v
+
+On compare le temps de calcul pour les deux méthodes, à valeur fixée égale.
+
+```{r}
+set.seed(333)
+x= 0.3
+N = 100
+T_end = 10
+t_SDE = NULL
+t_Markov = NULL
+for(M in logspace(2,5,10)){
+  t = Sys.time()
+  res = replicate(M,euler_Scheme_SDE(x,T_end,N))
+  t_SDE = c(t_SDE,Sys.time()-t)
+  
+  t = Sys.time()
+  res = replicate(M,simulation_MC(x,N,T_end))
+  t_Markov = c(t_Markov,Sys.time()-t)
+}
+
+```
+
+```{r}
+
+p = ggplot()
+
+data = data.frame(time = t_SDE,t_Markov=t_Markov,M = logspace(2,5,10))
+p = p + geom_line(data = data , aes(x = M , y = time),col = 1)
+p = p + geom_line(data = data , aes(x = M , y = t_Markov),col = 2)
+plot(p)
+```
+
